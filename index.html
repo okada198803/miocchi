@@ -291,8 +291,13 @@ const SAVE_KEY='mioicchi_v7';
 const TAP_TO_HATCH=20;
 const STAGE_NAMES={egg:'たまご',baby:'ベビー',adult:'おとな',elder:'おとしより'};
 const PET_SIZE={egg:280,baby:280,adult:300,elder:280};
-const DECAY_RATE=0.15;
-const STAGE_TICKS=300;
+const STAGE_TICKS={baby:400,adult:400,elder:400}; // ~20min each, ~1h total life
+const DECAY_RATES={
+  baby:  {hunger:0.22, love:0.12, health:0.06, sleep:0.15},  // needs frequent care
+  adult: {hunger:0.15, love:0.08, health:0.05, sleep:0.10},  // balanced
+  elder: {hunger:0.10, love:0.06, health:0.12, sleep:0.08},  // health decays faster
+};
+const BOUNDS={xMin:0.02,xMax:0.85,yMin:0.35,yMax:0.82};
 
 let state={stage:'egg',tapCount:0,hunger:100,love:100,health:100,sleep:100,sick:false,sleeping:false,ageTicks:0,furniture:[],petX:0.5,petY:0.6};
 let walkTarget=null,walkDir='front',bobPhase=0,idleTimer=0,bubbleTimer=null,actionCooldown=false;
@@ -339,15 +344,22 @@ function gameLoop(ts){
 function updateMovement(dt){
   const sz=PET_SIZE[state.stage],rw=room.clientWidth,rh=room.clientHeight;
 
-  // Priority: react to new furniture
-  if(reactTarget){
-    walkTarget=reactTarget;reactTarget=null;
+  // Check if pet is out of bounds and force return
+  if(state.petX<BOUNDS.xMin||state.petX>BOUNDS.xMax||state.petY<BOUNDS.yMin||state.petY>BOUNDS.yMax){
+    walkTarget={x:0.3+Math.random()*0.3,y:0.5+Math.random()*0.2};
+    reactTarget=null;
   }
+
+  // Priority: react to new furniture
+  if(reactTarget){walkTarget=reactTarget;reactTarget=null;}
 
   if(!walkTarget){
     idleTimer-=dt;
     if(idleTimer<=0){
-      walkTarget={x:0.05+Math.random()*0.7,y:0.4+Math.random()*0.35};
+      walkTarget={
+        x:BOUNDS.xMin+0.05+Math.random()*(BOUNDS.xMax-BOUNDS.xMin-0.1),
+        y:BOUNDS.yMin+0.05+Math.random()*(BOUNDS.yMax-BOUNDS.yMin-0.1)
+      };
       idleTimer=2+Math.random()*4;
     }else{walkDir='front';updateSprite();return;}
   }
@@ -355,7 +367,6 @@ function updateMovement(dt){
   const speed=0.06,dx=walkTarget.x-state.petX,dy=walkTarget.y-state.petY;
   const dist=Math.sqrt(dx*dx+dy*dy);
   if(dist<0.02){
-    // Arrived
     if(walkTarget.reaction){
       showBubble(walkTarget.reaction);
       spawnHearts(pet.getBoundingClientRect().left+pet.offsetWidth/2,pet.getBoundingClientRect().top);
@@ -364,6 +375,9 @@ function updateMovement(dt){
     pet.style.transform='';updateSprite();return;
   }
   state.petX+=dx/dist*speed*dt;state.petY+=dy/dist*speed*dt;
+  // Clamp position
+  state.petX=Math.max(BOUNDS.xMin,Math.min(BOUNDS.xMax,state.petX));
+  state.petY=Math.max(BOUNDS.yMin,Math.min(BOUNDS.yMax,state.petY));
   if(Math.abs(dx)>Math.abs(dy)*0.5){walkDir=dx>0?'right':'left';}
   else{walkDir=dy>0?'front':'back';}
   bobPhase+=dt*6;pet.style.transform='translateY('+(Math.sin(bobPhase)*4)+'px)';
@@ -372,6 +386,8 @@ function updateMovement(dt){
 
 function positionPet(){
   const sz=PET_SIZE[state.stage],rw=room.clientWidth,rh=room.clientHeight;
+  state.petX=Math.max(BOUNDS.xMin,Math.min(BOUNDS.xMax,state.petX));
+  state.petY=Math.max(BOUNDS.yMin,Math.min(BOUNDS.yMax,state.petY));
   pet.style.left=(state.petX*(rw-sz))+'px';pet.style.top=(state.petY*(rh-sz))+'px';
   pet.style.width=sz+'px';pet.style.height=sz+'px';
 }
@@ -382,17 +398,19 @@ function updateSprite(){
 
 function tick(){
   if(state.stage==='egg')return;state.ageTicks++;
+  const dr=DECAY_RATES[state.stage]||DECAY_RATES.adult;
   if(!state.sleeping){
-    state.hunger=Math.max(0,state.hunger-DECAY_RATE);
-    state.love=Math.max(0,state.love-DECAY_RATE*0.5);
-    state.health=Math.max(0,state.health-DECAY_RATE*0.3);
-    state.sleep=Math.max(0,state.sleep-DECAY_RATE*0.6);
+    state.hunger=Math.max(0,state.hunger-dr.hunger);
+    state.love=Math.max(0,state.love-dr.love);
+    state.health=Math.max(0,state.health-dr.health);
+    state.sleep=Math.max(0,state.sleep-dr.sleep);
   }else{state.sleep=Math.min(100,state.sleep+1);if(state.sleep>=100)wakeUp();}
   if(!state.sick&&(state.hunger<15||state.health<15)){
     if(Math.random()<0.2){state.sick=true;notify('ぐあいがわるいみたい... 🤒');}
   }
   if(state.sick)state.health=Math.max(0,state.health-0.3);
-  if(state.ageTicks>=STAGE_TICKS)evolve();
+  const maxTicks=STAGE_TICKS[state.stage]||400;
+  if(state.ageTicks>=maxTicks)evolve();
   updateUI();if(state.ageTicks%10===0)saveState();
 }
 function evolve(){
